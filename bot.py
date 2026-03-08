@@ -80,7 +80,7 @@ async def _handle_link(update: Update, url: str) -> None:
     if not messages:
         await status.edit_text(
             "Не удалось загрузить сообщения.\n"
-            "Проверь: userbot должен быть участником этого чата."
+            "Проверь: твой аккаунт должен быть участником этого чата."
         )
         return
 
