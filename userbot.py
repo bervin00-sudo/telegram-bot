@@ -1,125 +1,97 @@
 #!/usr/bin/env python3
 """
-Userbot — доступ ко всем сообщениям аккаунта Telegram.
-
-Использует Telegram MTProto API (Telethon) для чтения всех входящих
-сообщений и отправляет AI-анализ с вариантами ответа в "Избранное".
-
-Требует: API_ID и API_HASH из https://my.telegram.org/apps
+Userbot — мониторинг всех входящих сообщений аккаунта.
+Использует общий Telethon-клиент из telethon_client.py.
 """
 
 import asyncio
 import logging
-from telethon import TelegramClient, events
-from telethon.tl.types import User, Chat, Channel, PeerUser
+from telethon import events
+from telethon.tl.types import User
 
 import ai_assistant
-from config import API_ID, API_HASH, validate_userbot_config
+from telethon_client import get_client
+from config import validate_userbot_config
 
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
 logger = logging.getLogger(__name__)
 
-# Имя файла сессии (сохраняет авторизацию между запусками)
-SESSION_NAME = 'userbot_session'
-
-# Минимальная длина текста для автоматического анализа (символов)
+# Минимальная длина текста для автоматического анализа
 MIN_TEXT_LENGTH = 10
 
-# Чаты, которые нужно игнорировать (боты, каналы без диалога и т.д.)
-IGNORED_CHATS = set()
+# Чаты, которые нужно игнорировать (добавь chat_id сюда)
+IGNORED_CHATS: set[int] = set()
 
 
-def format_sender_name(sender) -> str:
-    """Возвращает имя отправителя."""
+def _get_sender_name(sender) -> str:
     if isinstance(sender, User):
         parts = [sender.first_name or '', sender.last_name or '']
         name = ' '.join(p for p in parts if p).strip()
-        if sender.username:
-            return f"{name} (@{sender.username})"
-        return name or f"ID:{sender.id}"
-    if isinstance(sender, (Chat, Channel)):
-        return sender.title or f"Чат ID:{sender.id}"
-    return "Неизвестный"
+        return f"{name} (@{sender.username})" if sender.username else name or f"ID:{sender.id}"
+    title = getattr(sender, 'title', None)
+    return title or f"ID:{sender.id}"
 
 
-async def analyze_and_notify(client: TelegramClient, event, sender_name: str, text: str):
-    """Запускает AI-анализ и отправляет результат в Избранное."""
+async def _analyze_and_notify(client, sender_name: str, text: str):
+    loop = asyncio.get_event_loop()
     try:
-        loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, ai_assistant.analyze_message, text)
-
         notification = (
             f"📨 **Новое сообщение от {sender_name}:**\n"
             f"```\n{text[:300]}{'...' if len(text) > 300 else ''}\n```\n\n"
-            f"🤖 **AI-анализ и варианты ответа:**\n\n"
-            f"{result}"
+            f"🤖 **AI-анализ и варианты ответа:**\n\n{result}"
         )
-
-        # Отправляем в "Избранное" (me)
         await client.send_message('me', notification, parse_mode='markdown')
-        logger.info(f"Анализ отправлен в Избранное для сообщения от {sender_name}")
     except Exception as e:
-        logger.error(f"Ошибка при анализе сообщения от {sender_name}: {e}")
+        logger.error(f"Ошибка при анализе/уведомлении: {e}")
 
 
-async def main():
-    """Основная функция userbot."""
-    validate_userbot_config()
-
-    client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+def register_handlers(client):
+    """Регистрирует обработчики событий userbot на переданном клиенте."""
 
     @client.on(events.NewMessage(incoming=True))
     async def handle_incoming(event):
-        """Обрабатывает все входящие сообщения аккаунта."""
-        try:
-            # Игнорируем сообщения без текста
-            text = event.message.text or event.message.caption or ''
-            if not text or len(text) < MIN_TEXT_LENGTH:
-                return
+        text = event.message.text or event.message.caption or ''
+        if not text or len(text) < MIN_TEXT_LENGTH:
+            return
+        if event.chat_id in IGNORED_CHATS:
+            return
 
-            # Игнорируем чаты из списка исключений
-            chat_id = event.chat_id
-            if chat_id in IGNORED_CHATS:
-                return
+        sender = await event.get_sender()
+        if isinstance(sender, User) and sender.bot:
+            return
 
-            # Получаем отправителя
-            sender = await event.get_sender()
+        sender_name = _get_sender_name(sender)
+        logger.info(f"Userbot: сообщение от {sender_name}")
+        asyncio.create_task(_analyze_and_notify(client, sender_name, text))
 
-            # Игнорируем сообщения от ботов
-            if isinstance(sender, User) and sender.bot:
-                return
 
-            sender_name = format_sender_name(sender)
-            logger.info(f"Новое сообщение от {sender_name}: {text[:50]}...")
+async def run_userbot():
+    """Запускает userbot как standalone (без run.py)."""
+    validate_userbot_config()
 
-            # Запускаем анализ в фоне (не блокируем обработку других событий)
-            asyncio.create_task(
-                analyze_and_notify(client, event, sender_name, text)
-            )
+    logging.basicConfig(
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        level=logging.INFO
+    )
 
-        except Exception as e:
-            logger.error(f"Ошибка при обработке входящего сообщения: {e}")
+    client = get_client()
+    register_handlers(client)
 
-    print("Запуск userbot...")
-    print("При первом запуске введи номер телефона и код подтверждения из Telegram.")
-    print("Для остановки нажми Ctrl+C\n")
+    print("Запуск userbot…")
+    print("При первом запуске введи номер телефона и код из Telegram.\n")
 
     async with client:
         me = await client.get_me()
-        startup_msg = (
-            f"✅ Userbot запущен для аккаунта: **{me.first_name}** (@{me.username or me.id})\n\n"
-            f"Теперь все входящие сообщения длиннее {MIN_TEXT_LENGTH} символов будут "
-            f"автоматически анализироваться. AI-ответы приходят сюда, в Избранное.\n\n"
-            f"Чтобы добавить чат в игнор — отредактируй `IGNORED_CHATS` в `userbot.py`."
+        await client.send_message(
+            'me',
+            f"✅ Userbot запущен для **{me.first_name}** (@{me.username or me.id})\n"
+            f"Все входящие сообщения длиннее {MIN_TEXT_LENGTH} символов будут анализироваться.\n"
+            f"AI-ответы приходят сюда, в Избранное.",
+            parse_mode='markdown'
         )
-        await client.send_message('me', startup_msg, parse_mode='markdown')
         logger.info(f"Userbot запущен для @{me.username or me.id}")
-
         await client.run_until_disconnected()
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    asyncio.run(run_userbot())

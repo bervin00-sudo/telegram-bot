@@ -82,6 +82,46 @@ def generate_reply(context: str, instructions: str = "") -> str:
         return stream.get_final_message().content[-1].text
 
 
+def analyze_chain(messages: list[dict]) -> str:
+    """
+    Анализирует цепочку сообщений и предлагает ответ на последнее.
+
+    Args:
+        messages: список {'sender': str, 'text': str} в хронологическом порядке
+
+    Returns:
+        Анализ разговора и варианты ответа
+    """
+    formatted = '\n'.join(
+        f"{m['sender']}: {m['text']}" for m in messages
+    )
+
+    with client.messages.stream(
+        model="claude-opus-4-6",
+        max_tokens=1500,
+        thinking={"type": "adaptive"},
+        system=SYSTEM_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": f"""Проанализируй эту цепочку сообщений и предложи варианты ответа на последнее сообщение.
+
+Цепочка переписки:
+{formatted}
+
+Структура ответа:
+1. Краткое резюме разговора (2-3 предложения)
+2. Анализ последнего сообщения: тон, намерение, что требует ответа
+3. Три варианта ответа на последнее сообщение:
+   - Вариант 1 (краткий, формальный)
+   - Вариант 2 (развёрнутый, дружеский)
+   - Вариант 3 (нейтральный, по существу)"""
+            }
+        ]
+    ) as stream:
+        return stream.get_final_message().content[-1].text
+
+
 def check_reply(reply_text: str) -> str:
     """
     Проверяет предложенный ответ на политкорректность и корректность.
