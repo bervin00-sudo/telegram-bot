@@ -4,10 +4,11 @@ AI-ассистент для анализа сообщений и генерац
 
 import anthropic
 from config import ANTHROPIC_API_KEY
+import knowledge_base
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
 
-SYSTEM_PROMPT = """Ты — умный ассистент для помощи в общении в Telegram.
+_BASE_SYSTEM_PROMPT = """Ты — умный ассистент для помощи в общении в Telegram.
 Твоя задача — анализировать входящие сообщения и помогать пользователю формулировать грамотные,
 корректные и эффективные ответы.
 
@@ -19,6 +20,11 @@ SYSTEM_PROMPT = """Ты — умный ассистент для помощи в
 - Сохранять конструктивность и уважительность в любой ситуации
 
 Отвечай всегда на русском языке, если не указано иное."""
+
+
+def _system_prompt() -> str:
+    """Возвращает системный промпт с актуальной базой знаний."""
+    return _BASE_SYSTEM_PROMPT + knowledge_base.build_context_block()
 
 
 def analyze_message(message_text: str) -> str:
@@ -35,7 +41,7 @@ def analyze_message(message_text: str) -> str:
         model="claude-opus-4-6",
         max_tokens=1024,
         thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
+        system=_system_prompt(),
         messages=[
             {
                 "role": "user",
@@ -74,7 +80,7 @@ def generate_reply(context: str, instructions: str = "") -> str:
         model="claude-opus-4-6",
         max_tokens=1024,
         thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
+        system=_system_prompt(),
         messages=[
             {"role": "user", "content": user_prompt}
         ]
@@ -100,7 +106,7 @@ def analyze_chain(messages: list[dict]) -> str:
         model="claude-opus-4-6",
         max_tokens=1500,
         thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
+        system=_system_prompt(),
         messages=[
             {
                 "role": "user",
@@ -136,7 +142,7 @@ def check_reply(reply_text: str) -> str:
         model="claude-opus-4-6",
         max_tokens=1024,
         thinking={"type": "adaptive"},
-        system=SYSTEM_PROMPT,
+        system=_system_prompt(),
         messages=[
             {
                 "role": "user",

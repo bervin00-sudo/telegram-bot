@@ -12,6 +12,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 import ai_assistant
 import telethon_client
+import knowledge_base
 
 # Настройка логирования
 logging.basicConfig(
@@ -175,7 +176,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"<b>Команды:</b>\n"
         f"/suggest — варианты ответа на последнее сообщение\n"
         f"/draft [пожелания] — сформулировать ответ\n"
-        f"/check [текст] — проверить текст\n"
+        f"/check [текст] — проверить текст\n\n"
+        f"<b>База знаний:</b>\n"
+        f"/addbook — добавить книгу\n"
+        f"/listbooks — список книг\n"
+        f"/addinstr — добавить инструкцию\n"
+        f"/listinstr — список инструкций\n"
         f"/help — справка"
     )
 
@@ -320,6 +326,104 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     )
 
 
+# ──────────────────────────────────────────────
+# База знаний: книги и инструкции
+# ──────────────────────────────────────────────
+
+async def addbook_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /addbook Название | Описание
+    Описание необязательно. Разделитель — символ |
+    """
+    if not context.args:
+        await update.message.reply_text(
+            "Укажи название книги.\n"
+            "Пример: /addbook Никогда не ешьте в одиночку | О нетворкинге и связях"
+        )
+        return
+
+    raw = " ".join(context.args)
+    if "|" in raw:
+        title, _, description = raw.partition("|")
+        title = title.strip()
+        description = description.strip()
+    else:
+        title = raw.strip()
+        description = ""
+
+    book_id = knowledge_base.add_book(title, description)
+    await update.message.reply_text(f"✅ Книга добавлена (id {book_id}): {title}")
+
+
+async def listbooks_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    books = knowledge_base.list_books()
+    if not books:
+        await update.message.reply_text("База книг пуста. Добавь книгу: /addbook Название | Описание")
+        return
+
+    lines = [f"<b>Книги в базе знаний:</b>"]
+    for b in books:
+        line = f"[{b['id']}] {b['title']}"
+        if b["description"]:
+            line += f" — <i>{b['description']}</i>"
+        lines.append(line)
+    lines.append("\nУдалить: /delbook <id>")
+    await update.message.reply_html("\n".join(lines))
+
+
+async def delbook_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Укажи id книги. Пример: /delbook 3")
+        return
+
+    book_id = int(context.args[0])
+    if knowledge_base.delete_book(book_id):
+        await update.message.reply_text(f"Книга с id {book_id} удалена.")
+    else:
+        await update.message.reply_text(f"Книга с id {book_id} не найдена.")
+
+
+async def addinstr_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/addinstr <текст инструкции>"""
+    if not context.args:
+        await update.message.reply_text(
+            "Укажи текст инструкции.\n"
+            "Пример: /addinstr Всегда отвечай кратко, не более 3 предложений"
+        )
+        return
+
+    text = " ".join(context.args)
+    idx = knowledge_base.add_instruction(text)
+    await update.message.reply_text(f"✅ Инструкция #{idx} добавлена.")
+
+
+async def listinstr_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    instructions = knowledge_base.list_instructions()
+    if not instructions:
+        await update.message.reply_text(
+            "Список инструкций пуст. Добавь: /addinstr <текст>"
+        )
+        return
+
+    lines = ["<b>Инструкции для бота:</b>"]
+    for i, t in enumerate(instructions, start=1):
+        lines.append(f"{i}. {t}")
+    lines.append("\nУдалить: /delinstr <номер>")
+    await update.message.reply_html("\n".join(lines))
+
+
+async def delinstr_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Укажи номер инструкции. Пример: /delinstr 2")
+        return
+
+    idx = int(context.args[0])
+    if knowledge_base.delete_instruction(idx):
+        await update.message.reply_text(f"Инструкция #{idx} удалена.")
+    else:
+        await update.message.reply_text(f"Инструкция #{idx} не найдена.")
+
+
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.warning(f"Update {update} вызвал ошибку: {context.error}")
 
@@ -340,6 +444,15 @@ def main() -> None:
     application.add_handler(CommandHandler("suggest", suggest_command))
     application.add_handler(CommandHandler("draft", draft_command))
     application.add_handler(CommandHandler("check", check_command))
+
+    # База знаний
+    application.add_handler(CommandHandler("addbook", addbook_command))
+    application.add_handler(CommandHandler("listbooks", listbooks_command))
+    application.add_handler(CommandHandler("delbook", delbook_command))
+    application.add_handler(CommandHandler("addinstr", addinstr_command))
+    application.add_handler(CommandHandler("listinstr", listinstr_command))
+    application.add_handler(CommandHandler("delinstr", delinstr_command))
+
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     application.add_error_handler(error_handler)
